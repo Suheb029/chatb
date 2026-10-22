@@ -1,56 +1,15 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import { connectDB, isDbConnected } from './config/db.js';
-import { seedDatabase } from './seed/seedData.js';
-import apiRouter from './routes/api.js';
+import app from './app.js';
+import { connectDB } from './config/db.js';
 
-dotenv.config();
-
-const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(cors({
-  origin: '*',
-  credentials: true,
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Health Check
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    mode: process.env.WHATSAPP_MODE || 'demo',
-    database: isDbConnected ? 'MongoDB Connected' : 'In-Memory Persistence Fallback',
-    timestamp: new Date().toISOString(),
-    service: 'WhatBot WhatsApp Business Integration Engine',
-  });
-});
-
-// API Routes
-app.use('/api', apiRouter);
-
-// Global Error Handler
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('[ServerError]', err);
-  res.status(err.status || 500).json({
-    success: false,
-    message: err.message || 'Internal Server Error',
-  });
-});
-
-// Start Server
+// Local development server runner
 const startServer = async () => {
   console.log('----------------------------------------------------');
   console.log('🚀 Starting WhatBot WhatsApp Business Platform Backend');
   console.log('----------------------------------------------------');
 
-  const dbOk = await connectDB();
-  if (dbOk) {
-    await seedDatabase();
-  }
+  await connectDB();
 
   app.listen(PORT, () => {
     console.log(`✅ Backend server running on http://localhost:${PORT}`);

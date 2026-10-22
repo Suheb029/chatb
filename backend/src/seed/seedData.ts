@@ -1,4 +1,7 @@
+import dotenv from 'dotenv';
 import { connectDB, isDbConnected } from '../config/db.js';
+
+dotenv.config();
 import { User } from '../models/User.js';
 import { Contact } from '../models/Contact.js';
 import { Conversation } from '../models/Conversation.js';
