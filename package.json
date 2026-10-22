@@ -1,0 +1,23 @@
+{
+  "name": "whatbot-platform",
+  "version": "1.0.0",
+  "description": "WhatsApp Business Chatbot Integration & Management Dashboard Platform",
+  "scripts": {
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "seed": "npm --prefix backend run seed",
+    "build:backend": "npm --prefix backend run build",
+    "build:frontend": "npm --prefix frontend run build"
+  },
+  "keywords": [
+    "whatsapp-business",
+    "chatbot",
+    "meta-cloud-api",
+    "dashboard",
+    "crm",
+    "automation"
+  ],
+  "author": "WhatBot Team",
+  "license": "MIT"
+}
