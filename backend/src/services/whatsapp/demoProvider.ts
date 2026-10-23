@@ -53,20 +53,34 @@ export class DemoWhatsAppProvider implements IWhatsAppProvider {
             messagesCount++;
             const senderProfile = val.contacts?.find((c: any) => c.wa_id === msg.from)?.profile?.name || '';
             let text = '';
+            let interactiveId = '';
+            let interactiveTitle = '';
+
             if (msg.type === 'text') {
               text = msg.text?.body || '';
             } else if (msg.type === 'interactive') {
-              text =
-                msg.interactive?.button_reply?.title ||
-                msg.interactive?.button_reply?.id ||
-                msg.interactive?.list_reply?.title ||
-                msg.interactive?.list_reply?.id ||
-                '';
+              const ir = msg.interactive;
+              if (ir?.button_reply) {
+                interactiveId = ir.button_reply.id || '';
+                interactiveTitle = ir.button_reply.title || '';
+              } else if (ir?.list_reply) {
+                interactiveId = ir.list_reply.id || '';
+                interactiveTitle = ir.list_reply.title || '';
+              }
+              text = interactiveTitle || interactiveId || '';
             } else if (msg.type === 'button') {
               text = msg.button?.text || msg.button?.payload || '';
+              interactiveTitle = msg.button?.text || '';
+              interactiveId = msg.button?.payload || '';
             } else {
               text = (msg as any)[msg.type]?.caption || '';
             }
+
+            const isSamplePayload =
+              msg.from === 'WHATSAPP_USER_ID' ||
+              entry.id === 'WHATSAPP_BUSINESS_ACCOUNT_ID' ||
+              val.metadata?.phone_number_id === 'WHATSAPP_PHONE_NUMBER_ID' ||
+              !/\d{7,15}/.test((msg.from || '').replace(/\D/g, ''));
 
             events.push({
               type: 'incoming_message',
@@ -74,6 +88,9 @@ export class DemoWhatsAppProvider implements IWhatsAppProvider {
               messageId: msg.id,
               senderName: senderProfile,
               text,
+              interactiveId,
+              interactiveTitle,
+              isSamplePayload,
               messageType: msg.type || 'text',
               timestamp: msg.timestamp,
               raw: msg,

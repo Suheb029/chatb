@@ -17,6 +17,13 @@ export interface IProviderResponse {
   timestamp: string;
   status: 'sent' | 'delivered' | 'read' | 'failed';
   error?: string;
+  errorCode?: number | string;
+  errorSubcode?: number | string;
+  errorType?: string;
+  errorDetails?: string;
+  traceId?: string;
+  diagnostic?: string;
+  isPermanentError?: boolean;
   provider: 'demo' | 'meta_cloud';
 }
 

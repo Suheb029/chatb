@@ -8,6 +8,7 @@ import { ApiConfig } from '../models/ApiConfig.js';
 import { BotEngine } from '../services/whatsapp/botEngine.js';
 import { memoryStore } from '../services/store.js';
 import { isDbConnected } from '../config/db.js';
+import { maskPhoneNumber } from '../config/whatsappConfig.js';
 
 // In-memory deduplication cache for WhatsApp webhook events (TTL 15 minutes)
 const PROCESSED_TTL_MS = 15 * 60 * 1000;
@@ -45,38 +46,61 @@ export const resetDeduplicationCache = () => {
 /**
  * GET /api/webhooks/whatsapp
  * Meta WhatsApp Cloud API Webhook Verification Handshake
- * Validates hub.mode, hub.verify_token, and responds with hub.challenge
+ * Validates hub.mode === 'subscribe', hub.verify_token, and responds with hub.challenge
  */
 export const verifyWebhook = async (req: Request, res: Response) => {
-  const mode = req.query['hub.mode'] as string;
-  const token = req.query['hub.verify_token'] as string;
-  const challenge = req.query['hub.challenge'] as string;
+  const mode = req.query['hub.mode'] ? String(req.query['hub.mode']).trim() : '';
+  const token = req.query['hub.verify_token'] ? String(req.query['hub.verify_token']).trim() : '';
+  const challenge = req.query['hub.challenge'] ? String(req.query['hub.challenge']).trim() : '';
 
-  // Read verification token from environment variable or database configuration
-  let expectedToken =
+  // Read verification token with documented precedence:
+  // 1. WHATSAPP_VERIFY_TOKEN
+  // 2. Legacy META_VERIFY_TOKEN
+  // 3. Database ApiConfig.webhookVerifyToken
+  let expectedToken = (
     process.env.WHATSAPP_VERIFY_TOKEN ||
-    process.env.META_VERIFY_TOKEN;
+    process.env.META_VERIFY_TOKEN ||
+    ''
+  ).trim();
 
   if (!expectedToken && isDbConnected) {
     try {
       const apiConfig = await ApiConfig.findOne();
-      expectedToken = apiConfig?.webhookVerifyToken;
+      if (apiConfig?.webhookVerifyToken) {
+        expectedToken = apiConfig.webhookVerifyToken.trim();
+      }
     } catch (e) {
-      console.warn('[Webhook] Error reading ApiConfig verify token:', e);
+      console.warn('[Webhook] Error reading ApiConfig verify token from DB:', e);
     }
   }
 
+  if (!expectedToken && memoryStore.data.apiConfig?.webhookVerifyToken) {
+    expectedToken = memoryStore.data.apiConfig.webhookVerifyToken.trim();
+  }
+
+  // If token is missing from configuration, return a clear configuration error
   if (!expectedToken) {
-    expectedToken = 'whatbot_secure_token';
+    console.error(
+      '[Webhook] ❌ Configuration Error: Webhook verify token is not configured on the server (WHATSAPP_VERIFY_TOKEN missing).'
+    );
+    return res
+      .status(500)
+      .type('text/plain')
+      .send('Server configuration error: Webhook verification token is not configured.');
   }
 
-  if (mode === 'subscribe' && token && token === expectedToken) {
-    console.log('[Webhook] GET verification successful. Handshake verified with challenge.');
-    return res.status(200).send(challenge);
+  if (mode !== 'subscribe') {
+    console.warn(`[Webhook] GET verification failed: invalid hub.mode "${mode}". Expected "subscribe".`);
+    return res.status(403).type('text/plain').send('Invalid hub.mode');
   }
 
-  console.warn('[Webhook] GET verification failed: hub.verify_token mismatch or invalid hub.mode.');
-  return res.status(403).send('Verification token mismatch');
+  if (!token || token !== expectedToken) {
+    console.warn('[Webhook] GET verification failed: hub.verify_token mismatch.');
+    return res.status(403).type('text/plain').send('Verification token mismatch');
+  }
+
+  console.log('[Webhook] GET verification successful. Handshake verified with challenge.');
+  return res.status(200).type('text/plain').send(challenge);
 };
 
 /**
@@ -138,17 +162,40 @@ export const receiveWebhook = async (req: Request, res: Response) => {
 
       // 2. Process Incoming Customer Messages
       if (event.type === 'incoming_message') {
+        // Detect Meta Dashboard sample test payloads and acknowledge without sending outbound replies
+        if (event.isSamplePayload) {
+          console.log(
+            `[Webhook] Meta App Dashboard sample test webhook payload received (dummy sender: ${event.from}). Acknowledging HTTP 200 without creating conversation or dispatching message.`
+          );
+          continue;
+        }
+
         const rawFrom = (event.from || '').replace(/\D/g, '');
-        const fromNumber = rawFrom.startsWith('+') ? rawFrom : `+${rawFrom}`;
+        if (!rawFrom || rawFrom.length < 7 || rawFrom.length > 15) {
+          console.warn(`[Webhook] Ignored incoming message with invalid phone number format: "${event.from}".`);
+          continue;
+        }
+        const fromNumber = `+${rawFrom}`;
         const senderName = event.senderName || `WhatsApp Customer (${fromNumber.slice(-4)})`;
         const text = (event.text || '').trim();
         const messageType = event.messageType || 'text';
         const waMessageId = event.messageId;
 
-        // Protection against duplicate processing
-        if (waMessageId && isDuplicateMessage(waMessageId)) {
-          console.log(`[Webhook] Duplicate incoming message ${waMessageId} ignored.`);
-          continue;
+        // Protection against duplicate processing via in-memory and database checks
+        if (waMessageId) {
+          if (isDuplicateMessage(waMessageId)) {
+            console.log(`[Webhook] Duplicate incoming message ${waMessageId} ignored (memory cache).`);
+            continue;
+          }
+          if (isDbConnected) {
+            try {
+              const exists = await Message.exists({ 'metadata.waMessageId': waMessageId });
+              if (exists) {
+                console.log(`[Webhook] Duplicate incoming message ${waMessageId} ignored (MongoDB record exists).`);
+                continue;
+              }
+            } catch (e) {}
+          }
         }
 
         // Find or create Contact in MongoDB / Memory
@@ -248,7 +295,11 @@ export const receiveWebhook = async (req: Request, res: Response) => {
           messageType: (allowedMessageTypes.includes(messageType) ? messageType : 'text') as any,
           status: 'delivered' as const,
           timestamp: new Date(),
-          metadata: { waMessageId: waMessageId },
+          metadata: {
+            waMessageId: waMessageId,
+            interactiveId: event.interactiveId,
+            interactiveTitle: event.interactiveTitle,
+          },
         };
 
         if (isDbConnected) {
@@ -262,23 +313,30 @@ export const receiveWebhook = async (req: Request, res: Response) => {
 
         // Check if bot is disabled in settings
         if (!isBotEnabled) {
-          console.log(`[Webhook] Bot is disabled in settings. Stored incoming message from ${fromNumber} for live agent queue; skipping automated reply.`);
+          console.log(`[Webhook] Bot is disabled in settings. Stored incoming message from ${maskPhoneNumber(fromNumber)} for live agent queue; skipping automated reply.`);
           continue;
         }
 
-        // Safely ignore or skip automated evaluation if message has no text
-        if (!text) {
-          console.log(`[Webhook] Received non-text message (${messageType}) from ${fromNumber}. No text content to evaluate.`);
+        // Safely ignore or skip automated evaluation if message has no text or interactive ID
+        if (!text && !event.interactiveId) {
+          console.log(`[Webhook] Received non-text message (${messageType}) from ${maskPhoneNumber(fromNumber)}. No text content to evaluate.`);
           continue;
         }
 
-        // Evaluate automated response via stateful BotEngine
-        const botDecision = await BotEngine.evaluateMessage(text, {
-          conversationId: conv._id.toString(),
-          contactId: contact._id.toString(),
-          contactName: senderName,
-          contactPhone: fromNumber,
-        });
+        // Evaluate automated response via stateful BotEngine with interactive support
+        const botDecision = await BotEngine.evaluateMessage(
+          text,
+          {
+            conversationId: conv._id.toString(),
+            contactId: contact._id.toString(),
+            contactName: senderName,
+            contactPhone: fromNumber,
+          },
+          {
+            interactiveId: event.interactiveId,
+            interactiveTitle: event.interactiveTitle,
+          }
+        );
 
         if (botDecision.action !== 'none' && botDecision.responseText) {
           // Prepare bot reply record
@@ -295,10 +353,14 @@ export const receiveWebhook = async (req: Request, res: Response) => {
             metadata: {
               matchedRule: botDecision.matchedRuleName || botDecision.reason,
               waMessageId: '',
+              errorCode: undefined as any,
+              error: undefined as any,
+              diagnostic: undefined as any,
+              provider: undefined as any,
             },
           };
 
-          // Dispatch reply via active provider (Meta Cloud API or Demo Sandbox)
+          // Dispatch reply via active provider (Meta Cloud API or Demo Sandbox) to the actual sender
           const sendResult = await provider.sendMessage({
             to: fromNumber,
             type: 'text',
@@ -307,6 +369,17 @@ export const receiveWebhook = async (req: Request, res: Response) => {
 
           if (sendResult?.messageId) {
             botReplyMsg.metadata.waMessageId = sendResult.messageId;
+          }
+          botReplyMsg.status = (sendResult.success ? 'sent' : 'failed') as any;
+          botReplyMsg.metadata.errorCode = sendResult.errorCode;
+          botReplyMsg.metadata.error = sendResult.error;
+          botReplyMsg.metadata.diagnostic = sendResult.diagnostic;
+          botReplyMsg.metadata.provider = sendResult.provider;
+
+          if (!sendResult.success) {
+            console.warn(
+              `[Webhook] Bot reply dispatch to ${maskPhoneNumber(fromNumber)} failed: ${sendResult.error} (Code: ${sendResult.errorCode || 'N/A'})`
+            );
           }
 
           if (isDbConnected) {

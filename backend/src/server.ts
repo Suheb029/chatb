@@ -1,5 +1,6 @@
 import app from './app.js';
 import { connectDB } from './config/db.js';
+import { validateConfigAtStartup } from './config/whatsappConfig.js';
 
 const PORT = process.env.PORT || 5000;
 
@@ -10,11 +11,16 @@ const startServer = async () => {
   console.log('----------------------------------------------------');
 
   await connectDB();
+  const config = await validateConfigAtStartup();
 
   app.listen(PORT, () => {
     console.log(`✅ Backend server running on http://localhost:${PORT}`);
     console.log(`📡 WhatsApp Webhook URL: http://localhost:${PORT}/api/webhooks/whatsapp`);
-    console.log(`🧪 Mode: ${process.env.WHATSAPP_MODE || 'demo'} (Meta Cloud API credentials optional)`);
+    console.log(
+      `🧪 Mode: ${config.mode.toUpperCase()} (${
+        config.mode === 'live' ? 'Meta Cloud API' : 'Sandbox Simulation'
+      })`
+    );
   });
 };
 

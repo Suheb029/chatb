@@ -262,12 +262,15 @@ export class BotEngine {
    */
   public static async evaluateMessage(
     incomingText: string,
-    context: IConversationContext = { conversationId: 'sim_conv_default' }
+    context: IConversationContext = { conversationId: 'sim_conv_default' },
+    interactiveData?: { interactiveId?: string; interactiveTitle?: string }
   ): Promise<IBotDecision> {
     const rawText = incomingText.trim();
     const text = rawText.toLowerCase();
+    const interactiveId = (interactiveData?.interactiveId || '').trim().toLowerCase();
+    const interactiveTitle = (interactiveData?.interactiveTitle || '').trim().toLowerCase();
 
-    if (!text) {
+    if (!text && !interactiveId) {
       return { action: 'none', reason: 'Empty text' };
     }
 
@@ -292,7 +295,7 @@ export class BotEngine {
     // If handoff is currently active, bot remains silent so agent can converse,
     // UNLESS the customer explicitly types 'menu' or 'start' to resume the bot!
     if (session.isHandoffActive) {
-      if (['menu', 'start', '0', 'bot', 'resume'].includes(text)) {
+      if (['menu', 'start', '0', 'bot', 'resume'].includes(text) || interactiveId === 'opt_menu') {
         session.isHandoffActive = false;
         session.state = 'MAIN_MENU';
         await this.saveSession(session);
@@ -323,9 +326,11 @@ export class BotEngine {
       'helpdesk',
       'operator',
       '6',
+      'opt_6',
     ];
     if (
-      (session.state === 'MAIN_MENU' && text === '6') ||
+      (session.state === 'MAIN_MENU' && (text === '6' || text === 'opt_6' || interactiveId === 'opt_6')) ||
+      interactiveId === 'opt_6' ||
       handoffTriggers.some((kw) => text === kw || text === `6. talk to an agent` || text === 'talk to an agent')
     ) {
       return await this.triggerHandoff(session, context);
@@ -418,6 +423,8 @@ export class BotEngine {
       // Option 1: Our Services
       if (
         text === '1' ||
+        text === 'opt_1' ||
+        interactiveId === 'opt_1' ||
         text.includes('our services') ||
         text === 'services' ||
         text === 'service'
@@ -460,6 +467,8 @@ export class BotEngine {
       // Option 2: View Catalog
       if (
         text === '2' ||
+        text === 'opt_2' ||
+        interactiveId === 'opt_2' ||
         text.includes('catalog') ||
         text.includes('view catalog') ||
         text.includes('products')
@@ -493,7 +502,14 @@ export class BotEngine {
       }
 
       // Option 3: Book an Appointment
-      if (text === '3' || text.includes('appointment') || text.includes('book an appointment')) {
+      if (
+        text === '3' ||
+        text === 'opt_3' ||
+        interactiveId === 'opt_3' ||
+        text.includes('appointment') ||
+        text.includes('book an appointment') ||
+        text === 'book'
+      ) {
         const services = await this.getCatalogItems('Service');
         session.historyStates.push('MAIN_MENU');
         session.state = 'VIEWING_CATALOG';
@@ -514,7 +530,13 @@ export class BotEngine {
       }
 
       // Option 4: Product/Service Enquiry
-      if (text === '4' || text.includes('enquiry') || text.includes('inquiry')) {
+      if (
+        text === '4' ||
+        text === 'opt_4' ||
+        interactiveId === 'opt_4' ||
+        text.includes('enquiry') ||
+        text.includes('inquiry')
+      ) {
         session.historyStates.push('MAIN_MENU');
         session.state = 'SELECTING_ITEM';
         session.draftType = 'enquiry';
@@ -529,7 +551,14 @@ export class BotEngine {
       }
 
       // Option 5: Track My Booking / Order
-      if (text === '5' || text.includes('track') || text.includes('booking status') || text.includes('order status')) {
+      if (
+        text === '5' ||
+        text === 'opt_5' ||
+        interactiveId === 'opt_5' ||
+        text.includes('track') ||
+        text.includes('booking status') ||
+        text.includes('order status')
+      ) {
         session.historyStates.push('MAIN_MENU');
         session.state = 'TRACKING_INPUT';
         await this.saveSession(session);
@@ -635,16 +664,29 @@ export class BotEngine {
       if (!isNaN(numSelection) && numSelection >= 1 && numSelection <= allItems.length) {
         selectedItem = allItems[numSelection - 1];
       } else {
+        // Try matching by interactive ID or title if provided
+        if (interactiveId || interactiveTitle) {
+          selectedItem = allItems.find(
+            (i: any) =>
+              i._id?.toString() === interactiveId ||
+              (i.sku && i.sku.toLowerCase() === interactiveId) ||
+              (interactiveTitle && i.name.toLowerCase() === interactiveTitle) ||
+              (interactiveId && i.name.toLowerCase() === interactiveId)
+          );
+        }
+
         // Try fuzzy and word-level matching item name
-        selectedItem = allItems.find((i: any) => {
-          const itemLower = i.name.toLowerCase();
-          if (itemLower.includes(text) || text.includes(itemLower)) return true;
-          const queryWords = text.split(/\s+/).filter((w: string) => w.length > 2);
-          if (queryWords.length > 0 && queryWords.every((w: string) => itemLower.includes(w))) {
-            return true;
-          }
-          return false;
-        });
+        if (!selectedItem) {
+          selectedItem = allItems.find((i: any) => {
+            const itemLower = i.name.toLowerCase();
+            if (itemLower.includes(text) || text.includes(itemLower)) return true;
+            const queryWords = text.split(/\s+/).filter((w: string) => w.length > 2);
+            if (queryWords.length > 0 && queryWords.every((w: string) => itemLower.includes(w))) {
+              return true;
+            }
+            return false;
+          });
+        }
       }
 
       if (selectedItem) {

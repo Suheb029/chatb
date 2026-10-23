@@ -6,6 +6,7 @@ import {
   IIncomingWebhookPayload,
   IConnectionTestResult,
 } from './whatsappProvider.interface.js';
+import { maskPhoneNumber } from '../../config/whatsappConfig.js';
 
 export interface IMetaConfig {
   wabaId?: string;
@@ -35,12 +36,41 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
    */
   public async sendMessage(payload: ISendMessagePayload): Promise<IProviderResponse> {
     if (!this.config.accessToken || !this.config.phoneNumberId) {
+      const missingKeys = [];
+      if (!this.config.phoneNumberId) missingKeys.push('WHATSAPP_PHONE_NUMBER_ID');
+      if (!this.config.accessToken) missingKeys.push('WHATSAPP_ACCESS_TOKEN');
+
+      const errorMsg = `Meta WhatsApp credentials missing: ${missingKeys.join(' and ')} not configured.`;
+      console.error(`[MetaCloudApiProvider] ❌ Configuration Error: ${errorMsg}`);
+
       return {
         success: false,
         messageId: '',
         timestamp: new Date().toISOString(),
         status: 'failed',
-        error: 'Meta WhatsApp credentials missing: Phone Number ID or Access Token not configured.',
+        error: errorMsg,
+        errorCode: 'MISSING_CREDENTIALS',
+        diagnostic:
+          'Live mode requires valid Meta Cloud API credentials. Please set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID in backend/.env or configure them in the Settings dashboard.',
+        isPermanentError: true,
+        provider: 'meta_cloud',
+      };
+    }
+
+    const cleanTo = (payload.to || '').replace(/\D/g, '');
+    if (!cleanTo || cleanTo.length < 7 || cleanTo.length > 15) {
+      const errorMsg = `Invalid recipient phone number format: "${payload.to}". Must be a valid international E.164 number.`;
+      console.error(`[MetaCloudApiProvider] ❌ Validation Error: ${errorMsg}`);
+      return {
+        success: false,
+        messageId: '',
+        timestamp: new Date().toISOString(),
+        status: 'failed',
+        error: errorMsg,
+        errorCode: 'INVALID_RECIPIENT_NUMBER',
+        diagnostic:
+          'Recipient phone number must contain between 7 and 15 digits according to the international E.164 standard without dummy characters.',
+        isPermanentError: true,
         provider: 'meta_cloud',
       };
     }
@@ -49,8 +79,6 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
     const timeout = setTimeout(() => controller.abort(), 10000); // 10s request timeout
 
     try {
-      const cleanTo = payload.to.replace(/\D/g, ''); // Numbers only
-
       // Build WhatsApp Graph API payload format
       let body: any = {
         messaging_product: 'whatsapp',
@@ -97,18 +125,53 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
       const responseData: any = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        const errorMsg =
-          responseData?.error?.message ||
-          `HTTP ${response.status}: Failed to send message via Meta Graph API`;
-        const errorCode = responseData?.error?.code;
-        // Never log accessToken or secrets
-        console.error(`[MetaCloudApiProvider] Error sending message (Code: ${errorCode || 'N/A'}):`, errorMsg);
+        const errObj = responseData?.error || {};
+        const errorCode = errObj.code;
+        const errorSubcode = errObj.error_subcode;
+        const errorType = errObj.type || 'OAuthException';
+        const rawMessage =
+          errObj.message || `HTTP ${response.status}: Failed to send message via Meta Graph API`;
+        const errorDetails = errObj.error_data?.details || '';
+        const fbtraceId = errObj.fbtrace_id || '';
+
+        const isRecipientNotAllowed = errorCode === 131030 || rawMessage.includes('131030');
+
+        let diagnostic = errorDetails || rawMessage;
+        if (isRecipientNotAllowed) {
+          diagnostic =
+            `Meta Graph API Error 131030: Recipient phone number not in allowed list.\n` +
+            `• Test Phone Number (Development Mode): When using a Meta sandbox test number, messages can ONLY be sent to recipient phone numbers explicitly added to your Meta App's allowed recipients list. Navigate to: Meta App Dashboard > WhatsApp > API Setup > 'To' phone number field > Manage phone number list, and add/verify ${maskPhoneNumber(cleanTo)}.\n` +
+            `• Production Phone Number: Verify that the configured WHATSAPP_PHONE_NUMBER_ID (${this.config.phoneNumberId}) is correct and belongs to a live, verified WhatsApp Business Account with an active payment method.\n` +
+            `• Important: Code changes cannot bypass Meta's allowlist security restriction. You must register the recipient number in the Meta App Dashboard or switch to an approved live production number.`;
+
+          console.error(
+            `[MetaCloudApiProvider] Error sending message (Code: 131030, Trace: ${fbtraceId || 'N/A'}): ` +
+            `Sender Phone Number ID: ${this.config.phoneNumberId}, Recipient: ${maskPhoneNumber(cleanTo)}. ` +
+            `Recipient is not in Meta allowed list.`
+          );
+        } else {
+          console.error(
+            `[MetaCloudApiProvider] Error sending message (Code: ${errorCode || 'N/A'}, Trace: ${fbtraceId || 'N/A'}): ${rawMessage}`
+          );
+        }
+
+        const permanentCodes = [131030, 100, 131026, 131047, 131051, 132000, 132001, 190];
+        const isPermanentError =
+          isRecipientNotAllowed || (typeof errorCode === 'number' && permanentCodes.includes(errorCode));
+
         return {
           success: false,
           messageId: '',
           timestamp: new Date().toISOString(),
           status: 'failed',
-          error: errorMsg,
+          error: rawMessage,
+          errorCode,
+          errorSubcode,
+          errorType,
+          errorDetails,
+          traceId: fbtraceId,
+          diagnostic,
+          isPermanentError,
           provider: 'meta_cloud',
         };
       }
@@ -131,6 +194,11 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
         timestamp: new Date().toISOString(),
         status: 'failed',
         error: errorMsg,
+        errorCode: isTimeout ? 'REQUEST_TIMEOUT' : 'NETWORK_ERROR',
+        diagnostic: isTimeout
+          ? 'Network request to Meta Graph API timed out after 10000ms.'
+          : `Network error reaching Meta Graph API: ${err.message}`,
+        isPermanentError: false,
         provider: 'meta_cloud',
       };
     } finally {
@@ -143,11 +211,16 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
    * Validates hub.mode == 'subscribe' and hub.verify_token
    */
   public verifyWebhook(mode: string, token: string, challenge: string): string | null {
-    if (mode === 'subscribe' && token && token === this.config.webhookVerifyToken) {
+    const expectedToken = (this.config.webhookVerifyToken || '').trim();
+    if (!expectedToken) {
+      console.error('[MetaCloudApiProvider] Webhook verification failed: No verify token configured.');
+      return null;
+    }
+    if (mode === 'subscribe' && token && token.trim() === expectedToken) {
       console.log('[MetaCloudApiProvider] Webhook verification handshake successful');
       return challenge;
     }
-    console.warn('[MetaCloudApiProvider] Webhook verification failed. Token mismatch.');
+    console.warn('[MetaCloudApiProvider] Webhook verification failed. Token mismatch or invalid mode.');
     return null;
   }
 
@@ -213,21 +286,36 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
 
               // Safely extract text from text, interactive button/list replies, or quick replies
               let text = '';
+              let interactiveId = '';
+              let interactiveTitle = '';
+
               if (msg.type === 'text') {
                 text = msg.text?.body || '';
               } else if (msg.type === 'interactive') {
-                text =
-                  msg.interactive?.button_reply?.title ||
-                  msg.interactive?.button_reply?.id ||
-                  msg.interactive?.list_reply?.title ||
-                  msg.interactive?.list_reply?.id ||
-                  '';
+                const ir = msg.interactive;
+                if (ir?.button_reply) {
+                  interactiveId = ir.button_reply.id || '';
+                  interactiveTitle = ir.button_reply.title || '';
+                } else if (ir?.list_reply) {
+                  interactiveId = ir.list_reply.id || '';
+                  interactiveTitle = ir.list_reply.title || '';
+                }
+                text = interactiveTitle || interactiveId || '';
               } else if (msg.type === 'button') {
                 text = msg.button?.text || msg.button?.payload || '';
+                interactiveTitle = msg.button?.text || '';
+                interactiveId = msg.button?.payload || '';
               } else {
                 // Non-text message (e.g. image caption, document caption, audio, etc.)
                 text = (msg as any)[msg.type]?.caption || '';
               }
+
+              // Detect Meta App Dashboard sample test payloads
+              const isSamplePayload =
+                msg.from === 'WHATSAPP_USER_ID' ||
+                entry.id === 'WHATSAPP_BUSINESS_ACCOUNT_ID' ||
+                val.metadata?.phone_number_id === 'WHATSAPP_PHONE_NUMBER_ID' ||
+                !/\d{7,15}/.test((msg.from || '').replace(/\D/g, ''));
 
               events.push({
                 type: 'incoming_message',
@@ -237,6 +325,9 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
                 timestamp: msg.timestamp,
                 messageType: msg.type,
                 text,
+                interactiveId,
+                interactiveTitle,
+                isSamplePayload,
                 raw: msg,
               });
             }

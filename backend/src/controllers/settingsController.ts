@@ -3,12 +3,7 @@ import { memoryStore } from '../services/store.js';
 import { isDbConnected } from '../config/db.js';
 import { ApiConfig } from '../models/ApiConfig.js';
 import { WhatsAppProviderFactory } from '../services/whatsapp/providerFactory.js';
-
-const maskToken = (token?: string): string => {
-  if (!token || token.trim().length === 0) return '';
-  if (token.length <= 8) return '••••••••';
-  return `${token.slice(0, 4)}••••••••••••••••${token.slice(-4)}`;
-};
+import { resolveWhatsAppConfig, maskSecret } from '../config/whatsappConfig.js';
 
 export const getSettings = async (req: Request, res: Response) => {
   try {
@@ -23,23 +18,24 @@ export const getSettings = async (req: Request, res: Response) => {
       config = memoryStore.data.apiConfig;
     }
 
+    const resolved = resolveWhatsAppConfig(config);
     const provider = await WhatsAppProviderFactory.getProvider();
     const status = provider.getStatus();
 
     res.json({
       success: true,
       data: {
-        mode: config.mode || 'demo',
-        wabaId: config.wabaId || '',
-        phoneNumberId: config.phoneNumberId || '',
-        accessTokenMasked: maskToken(config.accessToken),
-        hasAccessToken: Boolean(config.accessToken && config.accessToken.length > 5),
-        webhookVerifyToken: config.webhookVerifyToken || 'whatbot_secure_token',
+        mode: resolved.mode,
+        wabaId: resolved.wabaId,
+        phoneNumberId: resolved.phoneNumberId,
+        accessTokenMasked: maskSecret(resolved.accessToken),
+        hasAccessToken: Boolean(resolved.accessToken && resolved.accessToken.length > 5),
+        webhookVerifyToken: resolved.webhookVerifyToken || 'whatbot_secure_token',
         webhookCallbackUrl:
           config.webhookCallbackUrl || `${req.protocol}://${req.get('host')}/api/webhooks/whatsapp`,
         isConnected: config.isConnected ?? false,
         lastTestedAt: config.lastTestedAt,
-        metaVersion: config.metaVersion || 'v20.0',
+        metaVersion: resolved.metaVersion,
         providerStatus: status,
       },
     });

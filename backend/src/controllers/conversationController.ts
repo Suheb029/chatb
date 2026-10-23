@@ -151,10 +151,18 @@ export const sendMessage = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
-    // Call WhatsApp Provider to dispatch message (demo or live meta API)
+    const recipientPhone = contact?.phoneNumber?.trim();
+    if (!recipientPhone) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot send message: Recipient phone number is missing from contact profile.',
+      });
+    }
+
+    // Call WhatsApp Provider to dispatch message (demo or live meta API) to the actual recipient
     const provider = await WhatsAppProviderFactory.getProvider();
     const sendResult = await provider.sendMessage({
-      to: contact?.phoneNumber || '+15550000000',
+      to: recipientPhone,
       type: messageType,
       text,
       mediaUrl,
@@ -175,6 +183,9 @@ export const sendMessage = async (req: Request, res: Response) => {
       metadata: {
         waMessageId: sendResult.messageId,
         provider: sendResult.provider,
+        errorCode: sendResult.errorCode,
+        error: sendResult.error,
+        diagnostic: sendResult.diagnostic,
       },
     };
 
