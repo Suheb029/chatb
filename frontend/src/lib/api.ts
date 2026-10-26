@@ -174,6 +174,9 @@ export const api = {
       request<any>('/settings/test-connection', { method: 'POST' }),
     resetDemo: () =>
       request<any>('/settings/reset-demo', { method: 'POST' }),
+    getQR: () => request<any>('/settings/qr'),
+    logoutQR: () =>
+      request<any>('/settings/qr/logout', { method: 'POST' }),
   },
 
   // Business Profile & Assistant Configuration

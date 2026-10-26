@@ -143,7 +143,7 @@ export interface Campaign {
 }
 
 export interface ApiSettings {
-  mode: 'demo' | 'live';
+  mode: 'demo' | 'live' | 'qr';
   wabaId: string;
   phoneNumberId: string;
   accessTokenMasked: string;
@@ -155,7 +155,7 @@ export interface ApiSettings {
   metaVersion: string;
   providerStatus: {
     name: string;
-    mode: 'demo' | 'live';
+    mode: 'demo' | 'live' | 'qr';
     isReady: boolean;
     description: string;
   };

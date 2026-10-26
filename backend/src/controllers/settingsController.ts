@@ -122,3 +122,29 @@ export const resetDemoData = async (req: Request, res: Response) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+export const getQRStatus = async (req: Request, res: Response) => {
+  try {
+    const { BaileysWhatsAppProvider } = await import('../services/whatsapp/baileysProvider.js');
+    const baileys = BaileysWhatsAppProvider.getInstance();
+    // Trigger initialization if not started
+    if (!baileys.getQRStatus().isConnected && !baileys.getQRStatus().qrRaw) {
+      baileys.initialize().catch((e) => console.error('[Baileys] auto-init err:', e));
+    }
+    res.json({ success: true, data: baileys.getQRStatus() });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const logoutQR = async (req: Request, res: Response) => {
+  try {
+    const { BaileysWhatsAppProvider } = await import('../services/whatsapp/baileysProvider.js');
+    const baileys = BaileysWhatsAppProvider.getInstance();
+    await baileys.logout();
+    res.json({ success: true, message: 'WhatsApp Web session logged out. New QR code generated.' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+

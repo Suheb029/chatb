@@ -1,12 +1,13 @@
 import { IWhatsAppProvider } from './whatsappProvider.interface.js';
 import { DemoWhatsAppProvider } from './demoProvider.js';
 import { MetaCloudApiProvider } from './metaCloudApiProvider.js';
+import { BaileysWhatsAppProvider } from './baileysProvider.js';
 import { ApiConfig } from '../../models/ApiConfig.js';
 import { isDbConnected } from '../../config/db.js';
 import { resolveWhatsAppConfig } from '../../config/whatsappConfig.js';
 
 let cachedProvider: IWhatsAppProvider | null = null;
-let currentMode: 'demo' | 'live' = 'demo';
+let currentMode: 'demo' | 'live' | 'qr' = 'demo';
 
 export class WhatsAppProviderFactory {
   public static async getProvider(forceRefresh = false): Promise<IWhatsAppProvider> {
@@ -26,7 +27,12 @@ export class WhatsAppProviderFactory {
     const resolved = resolveWhatsAppConfig(config);
     currentMode = resolved.mode;
 
-    if (resolved.mode === 'live') {
+    if (resolved.mode === 'qr') {
+      const baileys = BaileysWhatsAppProvider.getInstance();
+      await baileys.initialize();
+      cachedProvider = baileys;
+      console.log('[ProviderFactory] Active provider: WhatsApp Web QR Provider (Direct WhatsApp Connection)');
+    } else if (resolved.mode === 'live') {
       cachedProvider = new MetaCloudApiProvider({
         phoneNumberId: resolved.phoneNumberId,
         accessToken: resolved.accessToken,
@@ -51,9 +57,10 @@ export class WhatsAppProviderFactory {
     return cachedProvider;
   }
 
-  public static getCurrentMode(): 'demo' | 'live' {
+  public static getCurrentMode(): 'demo' | 'live' | 'qr' {
     return currentMode;
   }
+
 
   public static invalidateCache() {
     cachedProvider = null;

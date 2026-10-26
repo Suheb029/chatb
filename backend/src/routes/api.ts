@@ -99,6 +99,8 @@ router.get('/settings', optionalAuth, settingsController.getSettings);
 router.put('/settings', optionalAuth, settingsController.updateSettings);
 router.post('/settings/test-connection', optionalAuth, settingsController.testConnection);
 router.post('/settings/reset-demo', optionalAuth, settingsController.resetDemoData);
+router.get('/settings/qr', optionalAuth, settingsController.getQRStatus);
+router.post('/settings/qr/logout', optionalAuth, settingsController.logoutQR);
 
 // --- Official Webhooks Routes (Meta Cloud API) ---
 router.get('/webhooks/whatsapp', webhookController.verifyWebhook);

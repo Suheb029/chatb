@@ -5,7 +5,7 @@ import { isDbConnected } from './db.js';
 dotenv.config();
 
 export interface IResolvedWhatsAppConfig {
-  mode: 'demo' | 'live';
+  mode: 'demo' | 'live' | 'qr';
   accessToken: string;
   phoneNumberId: string;
   webhookVerifyToken: string;
@@ -74,7 +74,7 @@ const resolveConfigValue = (
  * Resolve the complete WhatsApp integration configuration.
  */
 export const resolveWhatsAppConfig = (dbConfig?: any): IResolvedWhatsAppConfig => {
-  const envMode = process.env.WHATSAPP_MODE?.trim().toLowerCase() as 'demo' | 'live' | undefined;
+  const envMode = process.env.WHATSAPP_MODE?.trim().toLowerCase() as 'demo' | 'live' | 'qr' | 'web' | undefined;
 
   const accessToken = resolveConfigValue(
     'WHATSAPP_ACCESS_TOKEN',
@@ -128,13 +128,15 @@ export const resolveWhatsAppConfig = (dbConfig?: any): IResolvedWhatsAppConfig =
   // Mode selection:
   // If explicitly set in environment, honor environment strictly.
   // Otherwise fall back to DB config mode, or auto-detect based on live credential availability.
-  let mode: 'demo' | 'live' = 'demo';
-  if (envMode === 'live') {
+  let mode: 'demo' | 'live' | 'qr' = 'demo';
+  if (envMode === 'qr' || envMode === 'web') {
+    mode = 'qr';
+  } else if (envMode === 'live') {
     mode = 'live';
   } else if (envMode === 'demo') {
     mode = 'demo';
   } else if (dbConfig?.mode) {
-    mode = dbConfig.mode;
+    mode = (dbConfig.mode === 'web' ? 'qr' : dbConfig.mode) as 'demo' | 'live' | 'qr';
   } else if (hasRequiredLiveCredentials) {
     mode = 'live';
   }

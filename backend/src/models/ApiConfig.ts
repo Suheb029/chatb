@@ -2,7 +2,7 @@ import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IApiConfig extends Document {
   _id: any;
-  mode: 'demo' | 'live';
+  mode: 'demo' | 'live' | 'qr';
   wabaId: string;
   phoneNumberId: string;
   accessToken: string;
@@ -18,7 +18,7 @@ export interface IApiConfig extends Document {
 const ApiConfigSchema = new Schema<IApiConfig>(
   {
     _id: { type: String },
-    mode: { type: String, enum: ['demo', 'live'], default: 'demo' },
+    mode: { type: String, enum: ['demo', 'live', 'qr'], default: 'demo' },
     wabaId: { type: String, default: 'waba_demo_1092837465' },
     phoneNumberId: { type: String, default: 'phone_demo_9876543210' },
     accessToken: { type: String, default: '' },

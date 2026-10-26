@@ -24,7 +24,7 @@ export interface IProviderResponse {
   traceId?: string;
   diagnostic?: string;
   isPermanentError?: boolean;
-  provider: 'demo' | 'meta_cloud';
+  provider: 'demo' | 'meta_cloud' | 'baileys';
 }
 
 export interface IIncomingWebhookPayload {
@@ -72,7 +72,7 @@ export interface IIncomingWebhookPayload {
 
 export interface IConnectionTestResult {
   connected: boolean;
-  provider: 'demo' | 'meta_cloud';
+  provider: 'demo' | 'meta_cloud' | 'baileys';
   message: string;
   details?: {
     wabaId?: string;
@@ -80,6 +80,7 @@ export interface IConnectionTestResult {
     verifiedName?: string;
     qualityRating?: string;
     codeVerificationStatus?: string;
+    userId?: string;
   };
 }
 
@@ -118,8 +119,24 @@ export interface IWhatsAppProvider {
    */
   getStatus(): {
     name: string;
-    mode: 'demo' | 'live';
+    mode: 'demo' | 'live' | 'qr';
     isReady: boolean;
     description: string;
   };
+
+  /**
+   * Optional QR status for WhatsApp Web pairing
+   */
+  getQRStatus?(): {
+    isConnected: boolean;
+    user?: { id: string; name?: string } | null;
+    qrRaw: string | null;
+    qrDataUrl: string | null;
+  };
+
+  /**
+   * Optional logout for WhatsApp Web session
+   */
+  logout?(): Promise<void>;
 }
+

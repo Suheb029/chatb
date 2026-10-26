@@ -4,3 +4,5 @@
 node_modules/
 dist/
 *.log
+.baileys_auth/
+baileys_auth/
